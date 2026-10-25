@@ -1,0 +1,86 @@
+name: release-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semver MAJOR.MINOR.PATCH (e.g. 1.2.0). Do not include "v" prefix.'
+        required: true
+        type: string
+      rc_tag:
+        description: 'Source rc tag this release promotes (e.g. v1.2.0-rc.3). Optional — defaults to <version>-rc.latest.'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag stable + deploy to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve rc source
+        id: resolve
+        run: |
+          set -e
+          VERSION="${{ inputs.version }}"
+          VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! echo "$VERSION" | grep -Eq "$VERSION_RE"; then
+            echo "::error::version must match MAJOR.MINOR.PATCH (got: $VERSION)"
+            exit 1
+          fi
+          RC_INPUT="${{ inputs.rc_tag }}"
+          if [ -z "$RC_INPUT" ]; then
+            RC_INPUT=$(git ls-remote --tags --sort=-version:refname origin \
+              | grep -E "refs/tags/v${VERSION}-rc\.[0-9]+\$" | head -1 | awk -F/ '{print $NF}')
+          fi
+          if [ -z "$RC_INPUT" ]; then
+            echo "::error::no rc tag found for v${VERSION}-rc.*"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "rc_tag=$RC_INPUT"     >> "$GITHUB_OUTPUT"
+          echo "stable_tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved stable=v${VERSION} from rc=$RC_INPUT"
+
+      - name: Checkout the rc-tagged commit
+        run: git checkout "${{ steps.resolve.outputs.rc_tag }}"
+
+      - name: Tag stable (v${{ inputs.version }})
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.resolve.outputs.stable_tag }}" "${{ steps.resolve.outputs.rc_tag }}"
+          git push origin "${{ steps.resolve.outputs.stable_tag }}"
+
+      - name: Install + verify
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm test
+
+      - name: Deploy to production
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: .
+          command: deploy --env production --tag "${{ steps.resolve.outputs.stable_tag }}"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: GitHub Release (stable)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false

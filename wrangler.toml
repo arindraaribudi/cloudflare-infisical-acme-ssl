@@ -1,0 +1,27 @@
+name = "cloudflare-acme-worker"
+main = "src/index.ts"
+compatibility_date = "2025-07-18"
+compatibility_flags = ["nodejs_compat"]
+
+# `acme-client` does require('crypto') with a bare specifier. Under nodejs_compat wrangler
+# rewrites that to @cloudflare/unenv-preset/node/crypto, whose createSign is an unimplemented
+# stub ("[unenv] crypto.createSign is not implemented yet!"). This alias points bare `crypto`
+# at a shim that re-exports workerd's real node:crypto builtin via process.getBuiltinModule.
+alias = { "crypto" = "./src/lib/node-crypto-shim.mjs" }
+
+# Root config = production worker (`wrangler deploy` with no --env).
+# Cron triggers are scoped per-env below.
+
+[triggers]
+crons = ["0 3 * * *"]  # 03:00 UTC daily
+
+# Per-env secrets (set with `wrangler secret put NAME --env <env>`):
+#   INFISICAL_SERVICE_TOKEN
+#   INFISICAL_PROJECT_ID
+#   INFISICAL_NAMESPACE            # "prod" for production, "staging" for staging
+#   DEBUG_RENEW_TOKEN              # optional
+
+[env.staging]
+# Staging runs weekly (Sun 04:00 UTC) — keeps Let's Encrypt rate-limit pressure low.
+[env.staging.triggers]
+crons = ["0 4 * * 0"]

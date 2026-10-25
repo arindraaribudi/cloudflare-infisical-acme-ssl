@@ -1,0 +1,14 @@
+const nc = process.getBuiltinModule('node:crypto');
+export const createSign = nc.createSign;
+export const createVerify = nc.createVerify;
+export const createHmac = nc.createHmac;
+export const createHash = nc.createHash;
+export const createPrivateKey = nc.createPrivateKey;
+export const createPublicKey = nc.createPublicKey;
+export const constants = nc.constants;
+export const webcrypto = nc.webcrypto;
+export const randomInt = nc.randomInt;
+export const randomBytes = nc.randomBytes;
+export const generateKeyPair = nc.generateKeyPair;
+export const X509Certificate = nc.X509Certificate;
+export default nc;

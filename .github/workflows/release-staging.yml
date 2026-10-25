@@ -1,0 +1,75 @@
+name: release-staging
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to staging + rc tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.head_commit.author.name != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck + Test
+        run: pnpm typecheck && pnpm test
+
+      # Bump rc tag based on existing rc.N counter on the most recent git tag.
+      # Falls back to v0.1.0-rc.1 if no tag exists yet.
+      - name: Read latest rc tag
+        id: read-tag
+        run: |
+          TAGS=$(git ls-remote --tags --sort=-version:refname origin | grep -E 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$' | head -1)
+          if [ -z "$TAGS" ]; then
+            echo "next=v0.1.0-rc.1" >> "$GITHUB_OUTPUT"
+          else
+            LATEST=$(echo "$TAGS" | awk -F/ '{print $NF}')
+            BASE=$(echo "$LATEST" | sed -E 's/-rc\.[0-9]+$//')
+            N=$(echo "$LATEST" | sed -E 's/.*-rc\.([0-9]+)$/\1/')
+            NEXT=$((N + 1))
+            echo "next=${BASE}-rc.${NEXT}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push rc tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.read-tag.outputs.next }}" "${{ github.sha }}"
+          git push origin "${{ steps.read-tag.outputs.next }}"
+
+      - name: Deploy to staging
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: .
+          command: deploy --env staging --tag "${{ steps.read-tag.outputs.next }}"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Mark pre-release on GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.read-tag.outputs.next }}
+          name: ${{ steps.read-tag.outputs.next }} (staging)
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: false

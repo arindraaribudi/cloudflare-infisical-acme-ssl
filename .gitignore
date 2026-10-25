@@ -1,0 +1,11 @@
+node_modules
+.dev.vars
+.dev.vars.staging
+.prod.vars*
+dist
+.wrangler
+*.log
+.DS_Store
+pnpm-workspace.yaml
+.context
+.codegraph
